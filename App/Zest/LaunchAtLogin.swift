@@ -71,11 +71,12 @@ final class LaunchAtLogin: ObservableObject {
 
   /// Whether this launch should stay in the menu bar. The login-launch Apple event is not
   /// always delivered to SMAppService launches, so a launch in the first two minutes after
-  /// boot also counts, unless it is the first run ever (the user just installed Zest and
+  /// boot also counts while the login item is on, unless it is the first run ever (the user just installed Zest and
   /// needs to see it).
-  static func shouldStayHidden(firstRun: Bool) -> Bool {
-    if launchedAtLogin { return true }
-    return !firstRun && ProcessInfo.processInfo.systemUptime < 120
+  func shouldStayHidden(firstRun: Bool) -> Bool {
+    if Self.launchedAtLogin { return true }
+    // Only when the login item is on, so a manual launch with it off always shows the window.
+    return isEnabled && !firstRun && ProcessInfo.processInfo.systemUptime < 120
   }
 
   static var isFirstRun: Bool { !UserDefaults.standard.bool(forKey: decidedKey) }

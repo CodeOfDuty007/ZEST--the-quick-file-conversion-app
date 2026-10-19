@@ -16,8 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem?
   private let popover = NSPopover()
   private var window: NSWindow?
-  private var stayHidden = false
-  private var launchedAt = Date()
   private static let panelSize = NSSize(width: 340, height: 430)
 
   nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,9 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       // makes the app look dead. A window guarantees there is always something to see.
       let firstRun = LaunchAtLogin.isFirstRun
       LaunchAtLogin.shared.enableOnFirstRun()
-      stayHidden = LaunchAtLogin.shouldStayHidden(firstRun: firstRun)
-      launchedAt = Date()
-      if !stayHidden { showWindow() }
+      if !LaunchAtLogin.shared.shouldStayHidden(firstRun: firstRun) { showWindow() }
       openEditorFromArguments()
     }
   }
@@ -53,8 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     _ sender: NSApplication, hasVisibleWindows flag: Bool
   ) -> Bool {
     MainActor.assumeIsolated {
-      // The system can send a reopen right after a login launch; that is not the user.
-      if stayHidden, Date().timeIntervalSince(launchedAt) < 15 { return }
       showWindow()
     }
     return true
