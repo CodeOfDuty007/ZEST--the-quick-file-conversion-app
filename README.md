@@ -12,7 +12,7 @@ wheel of actions that appears under your cursor.</p>
 ## What it does
 
 Drag one or more files from Finder (or anywhere), tap **Shift**, and a glass wheel opens at
-the cursor. Four orange segments, like the sections of an orange, are the top level:
+the cursor. Four round glass buttons are the top level:
 
 | Segment | What is inside |
 | --- | --- |

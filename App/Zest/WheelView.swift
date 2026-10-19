@@ -25,31 +25,29 @@ struct WheelView: View {
         .frame(width: (geometry.outerRadius + geometry.closeMargin) * 2)
         .accessibilityHidden(true)
 
+      // One glass container per level: the outgoing ring leaves as a whole instead of its
+      // glass merging with the incoming buttons while the two overlap. The new ring grows
+      // in while the old one just fades, so descending and going back read as one motion.
       GlassBackdrop {
-        ZStack {
-          ForEach(Array(model.nodes.enumerated()), id: \.element.id) { index, node in
-            let angle = geometry.centreAngle(of: index)
-            let radius = geometry.buttonRingRadius
-            WheelButton(
-              node: node, hovered: model.hovered == index,
-              dwelling: model.dwellTarget == .child(index), dwell: model.dwell
-            )
-            .offset(x: radius * sin(angle), y: -radius * cos(angle))
-          }
+        ForEach(Array(model.nodes.enumerated()), id: \.element.id) { index, node in
+          let angle = geometry.centreAngle(of: index)
+          let radius = geometry.buttonRingRadius
+          WheelButton(
+            node: node, hovered: model.hovered == index,
+            dwelling: model.dwellTarget == .child(index), dwell: model.dwell
+          )
+          .offset(x: radius * sin(angle), y: -radius * cos(angle))
         }
-        // A new id per level lets SwiftUI cross-fade the old ring into the new one.
-        .id(model.levelID)
-        // The new ring grows in while the old one just fades, so descending and going back
-        // read as one motion instead of two rings cross-fading on top of each other.
-        .transition(
-          .asymmetric(
-            insertion: .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.88)),
-            removal: .opacity.animation(.easeOut(duration: 0.08))))
-
-        CentreBadge(model: model, radius: geometry.deadZoneRadius)
       }
-      .animation(.easeOut(duration: 0.18), value: model.levelID)
+      .id(model.levelID)
+      .transition(
+        .asymmetric(
+          insertion: .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.88)),
+          removal: .opacity.animation(.easeOut(duration: 0.08))))
+
+      CentreBadge(model: model, radius: geometry.deadZoneRadius)
     }
+    .animation(.easeOut(duration: 0.18), value: model.levelID)
     .frame(width: Self.side, height: Self.side)
     .scaleEffect(model.isOpen ? 1 : (reduceMotion ? 1 : 0.85))
     .opacity(model.isOpen ? 1 : 0)
