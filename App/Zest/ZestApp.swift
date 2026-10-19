@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var window: NSWindow?
   /// Set when a login launch keeps the window hidden; the reopen the system may send
   /// in the first moments after that launch is not the user.
-  private var hiddenLaunchAt: Date?
+  private var hiddenLaunchAt: TimeInterval?
   private static let panelSize = NSSize(width: 340, height: 430)
 
   nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
@@ -34,7 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let firstRun = LaunchAtLogin.isFirstRun
       LaunchAtLogin.shared.enableOnFirstRun()
       if LaunchAtLogin.shared.shouldStayHidden(firstRun: firstRun) {
-        hiddenLaunchAt = Date()
+        // Monotonic clock: wall time can jump at login when the network syncs it.
+        hiddenLaunchAt = ProcessInfo.processInfo.systemUptime
       } else {
         showWindow()
       }
@@ -56,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     _ sender: NSApplication, hasVisibleWindows flag: Bool
   ) -> Bool {
     MainActor.assumeIsolated {
-      if let start = hiddenLaunchAt, Date().timeIntervalSince(start) < 3 { return }
+      if let start = hiddenLaunchAt, ProcessInfo.processInfo.systemUptime - start < 3 { return }
       showWindow()
     }
     return true
