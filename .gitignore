@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+build/
+*.xcodeproj/xcuserdata/
+*.xcuserstate
+xcuserdata/
+Zest.xcodeproj/
+*Technical Plan.md

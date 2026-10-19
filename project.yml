@@ -1,0 +1,64 @@
+name: Zest
+options:
+  bundleIdPrefix: org.zest
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    # One binary in Debug: a separate debug dylib would need its own re-sign and can
+    # end up with a different signing identity than the executable.
+    ENABLE_DEBUG_DYLIB: NO
+packages:
+  ZestCore:
+    path: Packages/ZestCore
+  ZestBackends:
+    path: Packages/ZestBackends
+targets:
+  Zest:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/Zest
+    dependencies:
+      - package: ZestCore
+      - package: ZestBackends
+    info:
+      path: App/Zest/Resources/Info.plist
+      properties:
+        CFBundleName: Zest
+        CFBundleDisplayName: Zest
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        LSMinimumSystemVersion: "13.0"
+        NSHumanReadableCopyright: "Zest is free software, GPL-3.0-or-later."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.zest.Zest
+        PRODUCT_NAME: Zest
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+schemes:
+  Zest:
+    build:
+      targets:
+        Zest: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - package: ZestCore/ZestCoreTests
+        - package: ZestBackends/ZestBackendsTests

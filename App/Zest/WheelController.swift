@@ -1,0 +1,312 @@
+import AppKit
+import SwiftUI
+import UniformTypeIdentifiers
+import ZestBackends
+import ZestCore
+
+/// Wires drag detection, the wheel tree and the engine together.
+@MainActor
+final class WheelController: ObservableObject {
+  static let shared = WheelController()
+
+  @Published private(set) var accessibilityGranted = Permissions.accessibilityGranted
+  @Published private(set) var inputMonitoringGranted = Permissions.inputMonitoringGranted
+  @Published private(set) var modifierEvents = 0
+  @Published private(set) var dragsSeen = 0
+  @Published private(set) var lastLatency = "–"
+  @Published var source: DragTrigger.ModifierSource = .nsEvent {
+    didSet { if started, oldValue != source { trigger.start(source: source) } }
+  }
+  @Published var holdsLatencyActivity = true {
+    didSet { trigger.holdsLatencyActivity = holdsLatencyActivity }
+  }
+
+  private let log = SpikeLog.shared
+  private let trigger = DragTrigger()
+  private let model = WheelModel()
+  private let catalog = Catalog()
+  private var panel: WheelPanel?
+  private var started = false
+  private var lastDragEnd = ProcessInfo.processInfo.systemUptime
+
+  private struct Session {
+    let urls: [URL]
+    /// Per output format, one route per file in `urls` order (mixed selections differ per file).
+    let convertOptions: [UTType: Resolution.Option]
+  }
+  private var session: Session?
+  /// Bumped per drag so stale callbacks never touch a newer drag.
+  private var dragGeneration = 0
+  /// True while the drag is over the wheel, so its drop or cancel callback will still arrive.
+  private var pointerOverWheel = false
+  /// Near a screen edge the panel is clamped, so the pointer can start outside the ring.
+  /// Leaving only closes the wheel once the pointer has been inside it.
+  private var hasEnteredRing = false
+  private var dwellTimer: Timer?
+
+  func start() {
+    guard !started else { return }
+    started = true
+
+    let panel = WheelPanel(model: model)
+    panel.dropView.onEntered = { [weak self] in
+      self?.pointerOverWheel = true
+      self?.log.log("Panel received draggingEntered")
+    }
+    panel.dropView.onPointer = { [weak self] dx, dy in self?.pointer(dx: dx, dy: dy) ?? [] }
+    panel.dropView.onExited = { [weak self] in
+      self?.model.update { $0.pointerLeft() }
+      self?.closeWheel(reason: "draggingExited")
+    }
+    panel.dropView.onDrop = { [weak self] dx, dy, urls in
+      self?.handleDrop(dx: dx, dy: dy, urls: urls) ?? false
+    }
+    panel.dropView.onEnded = { [weak self] in self?.wheelDragEnded() }
+    panel.prewarm()
+    self.panel = panel
+
+    trigger.onNote = { [weak self] in self?.log.log($0) }
+    trigger.onDragBegan = { [weak self] urls, types in self?.dragBegan(urls: urls, types: types) }
+    trigger.onDragEnded = { [weak self] in self?.dragEnded() }
+    trigger.onModifierDown = { [weak self] t0 in self?.openWheel(t0: t0) }
+    trigger.start(source: source)
+
+    refreshPermissions()
+    log.log(
+      "Zest started. Accessibility=\(accessibilityGranted) InputMonitoring=\(inputMonitoringGranted) engines=\(catalog.backends.map(\.id))"
+    )
+  }
+
+  /// Triggers the system prompts for anything not yet granted.
+  func requestMissingPermissions() {
+    if !Permissions.inputMonitoringGranted {
+      log.log("Requesting Input Monitoring")
+      Permissions.requestInputMonitoring()
+    }
+    if !Permissions.accessibilityGranted {
+      log.log("Requesting Accessibility")
+      Permissions.requestAccessibility()
+    }
+  }
+
+  func refreshPermissions() {
+    accessibilityGranted = Permissions.accessibilityGranted
+    inputMonitoringGranted = Permissions.inputMonitoringGranted
+    modifierEvents = trigger.modifierEventCount
+  }
+
+  // MARK: Drag lifecycle
+
+  private func dragBegan(urls: [URL], types: [String]) {
+    dragsSeen += 1
+    // Start clean, and make sure the early returns below cannot leave an old session or
+    // wheel active from the previous drag.
+    dragGeneration += 1
+    closeWheel(reason: "new drag started")
+    pointerOverWheel = false
+    hasEnteredRing = false
+    session = nil
+    model.clear()
+
+    let kinds = urls.map { ContentSniffer.type(ofFileAt: $0) }
+    log.log(
+      "File drag: \(urls.count) file(s) \(urls.first?.lastPathComponent ?? "") [\(kinds.map { $0?.identifier ?? "?" }.joined(separator: ", "))] pasteboard=\(types.prefix(4).joined(separator: ","))"
+    )
+
+    guard let inputs = kinds as? [UTType] else {
+      log.log("Wheel skipped: could not identify every file")
+      return
+    }
+    // Types cannot tell a still TIFF from a multi-page one, so check the files themselves and
+    // dim the editors rather than let a drop fail silently.
+    var dimmed: [String: String] = [:]
+    if !urls.allSatisfy(ImageEditorModel.canEdit) {
+      for tool in catalog.router.tools where tool.status == .opensEditor {
+        dimmed[tool.id] = "Multi-page or animated images can't be edited yet."
+      }
+    }
+    let tree = WheelTree.build(router: catalog.router, inputs: inputs, dimmed: dimmed)
+    guard !tree.children.isEmpty else {
+      log.log("Wheel skipped: nothing applies to this selection")
+      return
+    }
+    let options = Dictionary(
+      uniqueKeysWithValues: catalog.router.resolve(inputs: inputs).available.map { ($0.output, $0) })
+    model.configure(tree: tree, urls: urls)
+    session = Session(urls: urls, convertOptions: options)
+    log.log("Wheel ready: \(tree.children.map(\.title).joined(separator: " · "))")
+  }
+
+  private func dragEnded() {
+    lastDragEnd = ProcessInfo.processInfo.systemUptime
+    refreshPermissions()
+    guard model.isOpen else {
+      session = nil
+      return
+    }
+    // The global mouse-up can arrive before the drop is delivered to the wheel. If the
+    // pointer is over the wheel, the drop or cancel callback (`wheelDragEnded`) tears
+    // down; a timer would race a slow drop. If it never reached the wheel, no drop can
+    // come, so close now.
+    if !pointerOverWheel {
+      closeWheel(reason: "mouse up")
+      session = nil
+    }
+  }
+
+  /// The drag session ended over the wheel. `performDragOperation` has already run if
+  /// there was a drop, and `handleDrop` clears the session itself.
+  private func wheelDragEnded() {
+    pointerOverWheel = false
+    closeWheel(reason: "drag ended over wheel")
+    session = nil
+  }
+
+  // MARK: Wheel
+
+  private func openWheel(t0: TimeInterval) {
+    guard session != nil, !model.isOpen, let panel else { return }
+    let idle = t0 - lastDragEnd
+    hasEnteredRing = false
+    model.resetToRoot()
+    panel.present(at: NSEvent.mouseLocation)
+    let t1 = ProcessInfo.processInfo.systemUptime
+    lastLatency = String(format: "%.1f ms", (t1 - t0) * 1000)
+    log.log(
+      String(
+        format: "Wheel shown: %.1f ms from modifier handler to orderFront+display (idle %.0f s, activity=%@)",
+        (t1 - t0) * 1000, idle, holdsLatencyActivity ? "on" : "off"))
+  }
+
+  private func closeWheel(reason: String) {
+    guard model.isOpen else { return }
+    dwellTimer?.invalidate()
+    dwellTimer = nil
+    panel?.dismiss()
+    log.log("Wheel closed (\(reason))")
+  }
+
+  // MARK: Pointer
+
+  /// Called for every pointer position while a drag is over the wheel. Returns `.copy`
+  /// only over an enabled leaf that has settled, so a drop anywhere else is refused.
+  private func pointer(dx: Double, dy: Double) -> NSDragOperation {
+    let geometry = model.geometry
+    let hit = geometry.hit(dx: dx, dy: dy)
+    if hit != .outside { hasEnteredRing = true }
+    if hasEnteredRing && geometry.shouldClose(dx: dx, dy: dy) {
+      model.update { $0.pointerLeft() }
+      closeWheel(reason: "pointer left the ring")
+      return []
+    }
+
+    let now = ProcessInfo.processInfo.systemUptime
+    model.update { $0.pointerMoved(hit: hit, dx: dx, dy: dy, now: now) }
+    scheduleDwell()
+    return model.navigator?.droppableNode(hit: hit, dx: dx, dy: dy) != nil ? .copy : []
+  }
+
+  /// Fires the hold-to-open step. A timer, not drag callbacks: they stop arriving while the
+  /// pointer is still, which is exactly when the user is holding.
+  private func scheduleDwell() {
+    dwellTimer?.invalidate()
+    dwellTimer = nil
+    guard let start = model.navigator?.dwellStart else { return }
+    let remaining = max(start + model.dwell - ProcessInfo.processInfo.systemUptime, 0)
+    let timer = Timer(timeInterval: remaining, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated { self?.dwellFired() }
+    }
+    // Common modes: a drag session runs the loop in event-tracking mode, where default-mode
+    // timers do not fire.
+    RunLoop.main.add(timer, forMode: .common)
+    dwellTimer = timer
+  }
+
+  private func dwellFired() {
+    let now = ProcessInfo.processInfo.systemUptime
+    let effect = model.update { $0.tick(now: now) } ?? nil
+    if let effect {
+      NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+      log.log(
+        "Wheel \(effect == .descended ? "opened" : "went back to") \(model.breadcrumb.last ?? "root")")
+    }
+    scheduleDwell()
+  }
+
+  // MARK: Drop
+
+  private func handleDrop(dx: Double, dy: Double, urls: [URL]) -> Bool {
+    let hit = model.geometry.hit(dx: dx, dy: dy)
+    guard let session, let node = model.navigator?.droppableNode(hit: hit, dx: dx, dy: dy) else {
+      log.log("Drop refused: not on a ready option")
+      return false
+    }
+    log.log("Drop on \(node.title): \(session.urls.map(\.lastPathComponent).joined(separator: ", "))")
+
+    let pipeline = catalog.pipeline
+    let router = catalog.router
+    let sources = session.urls
+    let options = session.convertOptions
+    closeWheel(reason: "dropped")
+    self.session = nil
+    trigger.finishDragFromDrop()
+
+    Task { [weak self] in
+      var outputs: [URL] = []
+      var failures = 0
+
+      switch node.action {
+      case .convert(let type):
+        guard let option = options[type], option.routes.count == sources.count else {
+          self?.log.log("FAILED: no route to \(node.title)")
+          return
+        }
+        for (url, route) in zip(sources, option.routes) {
+          do {
+            let out = try await pipeline.run(input: url, route: route)
+            outputs.append(out)
+            self?.log.log("Converted \(url.lastPathComponent) → \(out.lastPathComponent)")
+          } catch {
+            failures += 1
+            self?.log.log("FAILED \(url.lastPathComponent): \(error.localizedDescription)")
+          }
+        }
+
+      case .tool(let id):
+        guard let tool = router.tools.first(where: { $0.id == id }) else {
+          self?.log.log("FAILED: unknown tool \(id)")
+          return
+        }
+        // Editors open a window; everything else runs straight through the pipeline.
+        if tool.status == .opensEditor {
+          if let file = sources.first, EditorWindows.shared.open(toolID: id, file: file) {
+            self?.log.log("Opened \(node.title) editor for \(file.lastPathComponent)")
+          } else {
+            self?.log.log("FAILED: could not open the \(node.title) editor")
+          }
+          return
+        }
+        do {
+          let report = try await pipeline.runTool(tool, inputs: sources)
+          outputs = report.published
+          for url in report.published { self?.log.log("\(node.title) → \(url.lastPathComponent)") }
+          for skip in report.skipped {
+            self?.log.log("Skipped \(skip.input.lastPathComponent): \(skip.reason)")
+          }
+        } catch {
+          failures += 1
+          self?.log.log("FAILED \(node.title): \(error.localizedDescription)")
+        }
+
+      case .branch:
+        break
+      }
+
+      // Phase 0 question: Finder must never move or delete the source when we return .copy.
+      let intact = sources.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+      self?.log.log("Source files still present after drop: \(intact) (\(failures) failure(s))")
+      if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+    }
+    return true
+  }
+}
