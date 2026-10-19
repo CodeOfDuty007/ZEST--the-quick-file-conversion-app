@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     _ sender: NSApplication, hasVisibleWindows flag: Bool
   ) -> Bool {
     MainActor.assumeIsolated {
+      if let start = hiddenLaunchAt, Date().timeIntervalSince(start) < 3 { return }
       showWindow()
     }
     return true
