@@ -26,11 +26,6 @@ public struct WheelGeometry: Sendable, Equatable {
   public let buttonRadius: Double
   /// Extra reach around a button, so aiming does not need pixel precision.
   public let hitSlop: Double
-  /// Segmented rings (the root level) tile the whole annulus like the sections of a
-  /// citrus: every point of a segment is a target, apart from a thin seam between them.
-  public let segmented: Bool
-  /// Width of the seam between segments, in radians.
-  public let seam: Double
 
   public init(
     outerRadius: Double = 140,
@@ -38,9 +33,7 @@ public struct WheelGeometry: Sendable, Equatable {
     wedgeCount: Int,
     closeMargin: Double = 12,
     buttonRadius: Double = 33,
-    hitSlop: Double = 6,
-    segmented: Bool = false,
-    seam: Double = 0.07
+    hitSlop: Double = 6
   ) {
     self.outerRadius = outerRadius
     self.deadZoneRadius = deadZoneRadius
@@ -48,8 +41,6 @@ public struct WheelGeometry: Sendable, Equatable {
     self.closeMargin = closeMargin
     self.buttonRadius = buttonRadius
     self.hitSlop = hitSlop
-    self.segmented = segmented && wedgeCount >= 2
-    self.seam = seam
   }
 
   /// Distance from the wheel centre to the middle of every button.
@@ -63,15 +54,6 @@ public struct WheelGeometry: Sendable, Equatable {
     if radius < deadZoneRadius { return .deadZone }
     if radius > outerRadius || wedgeCount == 0 { return .outside }
     let index = wedgeIndex(dx: dx, dy: dy)
-    if segmented {
-      var angle = atan2(dx, dy)
-      if angle < 0 { angle += 2 * .pi }
-      // Distance from the segment's own centre line; the seam sits at ±sweep/2.
-      var offset = angle - centreAngle(of: index)
-      if offset > .pi { offset -= 2 * .pi }
-      if offset < -.pi { offset += 2 * .pi }
-      return abs(offset) <= sweep / 2 - seam / 2 ? .wedge(index) : .gap
-    }
     // Only the button itself (plus a little slop) is a target, not its whole sector.
     let angle = centreAngle(of: index)
     let bx = buttonRingRadius * sin(angle), by = buttonRingRadius * cos(angle)

@@ -30,28 +30,25 @@ struct WheelView: View {
           ForEach(Array(model.nodes.enumerated()), id: \.element.id) { index, node in
             let angle = geometry.centreAngle(of: index)
             let radius = geometry.buttonRingRadius
-            if geometry.segmented {
-              CitrusSegment(
-                node: node, index: index, geometry: geometry,
-                hovered: model.hovered == index,
-                dwelling: model.dwellTarget == .child(index), dwell: model.dwell
-              )
-            } else {
-              WheelButton(
-                node: node, hovered: model.hovered == index,
-                dwelling: model.dwellTarget == .child(index), dwell: model.dwell
-              )
-              .offset(x: radius * sin(angle), y: -radius * cos(angle))
-            }
+            WheelButton(
+              node: node, hovered: model.hovered == index,
+              dwelling: model.dwellTarget == .child(index), dwell: model.dwell
+            )
+            .offset(x: radius * sin(angle), y: -radius * cos(angle))
           }
         }
         // A new id per level lets SwiftUI cross-fade the old ring into the new one.
         .id(model.levelID)
-        .transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.9)))
+        // The new ring grows in while the old one just fades, so descending and going back
+        // read as one motion instead of two rings cross-fading on top of each other.
+        .transition(
+          .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.88)),
+            removal: .opacity.animation(.easeOut(duration: 0.08))))
 
         CentreBadge(model: model, radius: geometry.deadZoneRadius)
       }
-      .animation(.easeOut(duration: 0.16), value: model.levelID)
+      .animation(.easeOut(duration: 0.18), value: model.levelID)
     }
     .frame(width: Self.side, height: Self.side)
     .scaleEffect(model.isOpen ? 1 : (reduceMotion ? 1 : 0.85))
@@ -129,116 +126,6 @@ private struct WheelButton: View {
         : node.opensEditor ? "\(node.title), opens an editor" : node.title)
     .accessibilityHint(node.disabledReason ?? "")
     .accessibilityAddTraits(.isButton)
-  }
-}
-
-/// A slice of an annulus between two radii and two angles (clockwise from 12 o'clock).
-private struct AnnularSector: Shape {
-  let inner: Double
-  let outer: Double
-  let start: Double
-  let end: Double
-  let corner: Double
-
-  func path(in rect: CGRect) -> Path {
-    let c = CGPoint(x: rect.midX, y: rect.midY)
-    func at(_ radius: Double, _ a: Double) -> CGPoint {
-      CGPoint(x: c.x + radius * sin(a), y: c.y - radius * cos(a))
-    }
-    // SwiftUI angles run clockwise from 3 o'clock with y down; shift by -90° to start at 12.
-    func angle(_ a: Double) -> Angle { .radians(a - .pi / 2) }
-    let k = corner
-    var path = Path()
-    path.move(to: at(outer, start + k / outer))
-    path.addArc(
-      center: c, radius: outer, startAngle: angle(start + k / outer),
-      endAngle: angle(end - k / outer), clockwise: false)
-    path.addQuadCurve(to: at(outer - k, end), control: at(outer, end))
-    path.addLine(to: at(inner + k, end))
-    path.addQuadCurve(to: at(inner, end - k / inner), control: at(inner, end))
-    path.addArc(
-      center: c, radius: inner, startAngle: angle(end - k / inner),
-      endAngle: angle(start + k / inner), clockwise: true)
-    path.addQuadCurve(to: at(inner + k, start), control: at(inner, start))
-    path.addLine(to: at(outer - k, start))
-    path.addQuadCurve(to: at(outer, start + k / outer), control: at(outer, start))
-    path.closeSubpath()
-    return path
-  }
-}
-
-/// One of the four root choices, drawn as a section of an orange so the set reads as a
-/// whole fruit. The seam between sections is a thin gap; the pointer's target is the whole
-/// section, matching `WheelGeometry.hit` in segmented mode.
-private struct CitrusSegment: View {
-  let node: WheelNode
-  let index: Int
-  let geometry: WheelGeometry
-  let hovered: Bool
-  let dwelling: Bool
-  let dwell: TimeInterval
-
-  var body: some View {
-    let live = hovered && node.isEnabled
-    let corner = 5.0
-    let inset = geometry.seam / 2
-    let start = geometry.centreAngle(of: index) - geometry.sweep / 2 + inset
-    let end = geometry.centreAngle(of: index) + geometry.sweep / 2 - inset
-    let shape = AnnularSector(
-      inner: geometry.deadZoneRadius + 4, outer: geometry.outerRadius - 2,
-      start: start, end: end, corner: corner)
-    let angle = geometry.centreAngle(of: index)
-    let mid = geometry.buttonRingRadius
-
-    ZStack {
-      Color.clear
-        .modifier(GlassShape(shape: shape, tint: Theme.accent.opacity(live ? 0.9 : 0.34)))
-      shape.stroke(Theme.accent.opacity(live ? 0.9 : 0.5), lineWidth: 1)
-      VStack(spacing: 3) {
-        Image(systemName: node.symbol).font(.system(size: 22, weight: .medium))
-        Text(node.title).font(.system(size: 13, weight: .semibold))
-      }
-      .foregroundStyle(live ? Color.white : Color.primary)
-      .offset(x: mid * sin(angle), y: -mid * cos(angle))
-      .overlay(alignment: .center) {
-        DwellRing(active: dwelling, dwell: dwell, diameter: 58)
-          .offset(x: mid * sin(angle), y: -mid * cos(angle))
-      }
-      if node.isBranch {
-        Image(systemName: "chevron.right.circle.fill")
-          .font(.system(size: 13))
-          .symbolRenderingMode(.palette)
-          .foregroundStyle(.white, Theme.accent)
-          .offset(
-            x: (mid + 30) * sin(angle), y: -(mid + 30) * cos(angle))
-          .accessibilityHidden(true)
-      }
-    }
-    .frame(width: WheelView.side, height: WheelView.side)
-    .opacity(node.isEnabled ? 1 : 0.45)
-    .scaleEffect(hovered ? 1.03 : 1)
-    .animation(.easeOut(duration: 0.08), value: hovered)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(node.isBranch ? "\(node.title), opens more options" : node.title)
-    .accessibilityHint(node.disabledReason ?? "")
-    .accessibilityAddTraits(.isButton)
-  }
-}
-
-/// Glass in an arbitrary shape: Liquid Glass on macOS 26, a tinted material before.
-private struct GlassShape<S: Shape>: ViewModifier {
-  let shape: S
-  let tint: Color
-
-  func body(content: Content) -> some View {
-    if #available(macOS 26.0, *) {
-      content.glassEffect(.regular.tint(tint), in: shape)
-    } else {
-      content
-        .background(.ultraThinMaterial, in: shape)
-        .background(shape.fill(tint))
-        .shadow(color: .black.opacity(0.16), radius: 5, y: 2)
-    }
   }
 }
 

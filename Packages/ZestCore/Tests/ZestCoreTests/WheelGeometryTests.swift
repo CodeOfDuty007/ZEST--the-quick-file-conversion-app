@@ -67,33 +67,6 @@ final class WheelGeometryTests: XCTestCase {
     }
   }
 
-  func testSegmentsTileTheWholeRingExceptTheSeams() {
-    let four = WheelGeometry(wedgeCount: 4, segmented: true)
-    var wedges = Set<Int>()
-    for degrees in stride(from: 0.0, to: 360.0, by: 0.5) {
-      let p = point(100, degrees)
-      switch four.hit(dx: p.dx, dy: p.dy) {
-      case .wedge(let index): wedges.insert(index)
-      case .gap: break
-      default: XCTFail("@ \(degrees)")
-      }
-    }
-    XCTAssertEqual(wedges, [0, 1, 2, 3])
-    // Segment corners are targets, unlike the round buttons.
-    let corner = point(130, 40)
-    XCTAssertEqual(four.hit(dx: corner.dx, dy: corner.dy), .wedge(0))
-    // The seam between segment 0 and 1 (at 45°) is not.
-    let seam = point(100, 45)
-    XCTAssertEqual(four.hit(dx: seam.dx, dy: seam.dy), .gap)
-    // The wrap-around seam at 315° too.
-    let wrap = point(100, 315)
-    XCTAssertEqual(four.hit(dx: wrap.dx, dy: wrap.dy), .gap)
-  }
-
-  func testASingleWedgeIsNeverSegmented() {
-    XCTAssertFalse(WheelGeometry(wedgeCount: 1, segmented: true).segmented)
-  }
-
   func testWedgeCountIsCappedAtEight() {
     XCTAssertEqual(WheelGeometry(wedgeCount: 20).wedgeCount, 8)
     XCTAssertEqual(WheelGeometry(wedgeCount: -1).wedgeCount, 0)

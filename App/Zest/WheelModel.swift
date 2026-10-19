@@ -53,8 +53,7 @@ final class WheelModel: ObservableObject {
     if current.id != levelID {
       levelID = current.id
       geometry = WheelGeometry(
-        wedgeCount: current.children.count, buttonRadius: Double(WheelView.bubble) / 2,
-        segmented: current.id == WheelTree.root)
+        wedgeCount: current.children.count, buttonRadius: Double(WheelView.bubble) / 2)
     }
     if nodes != current.children { nodes = current.children }
     if case .child(let index) = navigator.hovered { hovered = index } else { hovered = nil }
