@@ -68,4 +68,15 @@ final class LaunchAtLogin: ObservableObject {
       && event?.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
         == OSType(keyAELaunchedAsLogInItem)
   }
+
+  /// Whether this launch should stay in the menu bar. The login-launch Apple event is not
+  /// always delivered to SMAppService launches, so a launch in the first two minutes after
+  /// boot also counts, unless it is the first run ever (the user just installed Zest and
+  /// needs to see it).
+  static func shouldStayHidden(firstRun: Bool) -> Bool {
+    if launchedAtLogin { return true }
+    return !firstRun && ProcessInfo.processInfo.systemUptime < 120
+  }
+
+  static var isFirstRun: Bool { !UserDefaults.standard.bool(forKey: decidedKey) }
 }
