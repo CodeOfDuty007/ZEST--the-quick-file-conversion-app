@@ -95,4 +95,15 @@ final class DocumentExportTests: XCTestCase {
     let tableHTML = try await convert(table, to: .html)
     XCTAssertTrue(try String(contentsOf: tableHTML[0], encoding: .utf8).contains("<table>"))
   }
+
+  func testWhitespaceOnlyFilesNeverShipAsBlankMarkdownOrHTML() async throws {
+    let blank = dir.appendingPathComponent("blank.txt")
+    try Data(" \n\t\n".utf8).write(to: blank)
+    for output in [Formats.markdown, UTType.html] {
+      do {
+        _ = try await convert(blank, to: output)
+        XCTFail("blank file converted to \(output.identifier)")
+      } catch { XCTAssertTrue(error.localizedDescription.contains("no content")) }
+    }
+  }
 }
