@@ -44,7 +44,8 @@ public enum WheelTree {
 
   /// Common formats first, so the ring is stable between drags.
   private static let popularity: [UTType] = [
-    .jpeg, .png, .heic, .pdf, Formats.markdown, .html, .mpeg4Movie, .mp3, .mpeg4Audio, .wav,
+    .jpeg, .png, .heic, .pdf, Formats.markdown, .html,
+    UTType("org.openxmlformats.wordprocessingml.document") ?? .data, .rtf, .plainText, .mpeg4Movie, .mp3, .mpeg4Audio, .wav,
     .tiff, .gif, .webP, .quickTimeMovie, .bmp,
   ]
 

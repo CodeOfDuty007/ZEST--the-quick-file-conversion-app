@@ -9,7 +9,7 @@ public struct Catalog: Sendable {
   public init(ffmpegSearchPaths: [String] = []) {
     var backends: [any Backend] = [
       ImageIOBackend(), ImageToPDFBackend(), ImageToolsBackend(), PDFToolsBackend(),
-      PDFRenderBackend(), DocumentBackend(), RedactBackend(),
+      PDFRenderBackend(), DocumentBackend(), DocumentExportBackend(), RedactBackend(),
     ]
     var unavailable: [UnavailableCapability] = []
     var unavailableTools: [UnavailableTool] = []

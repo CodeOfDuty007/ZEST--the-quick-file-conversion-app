@@ -40,6 +40,16 @@ public struct DocumentBackend: Backend {
     return nil
   }
 
+  static func load(_ input: URL, type: UTType, kind: Kind, embedImages: Bool) async throws -> Document {
+    switch kind {
+    case .pdf: return try await PDFReader.read(url: input)
+    case .rich: return try await RichReader.read(url: input, type: type)
+    case .text: return try TextReader.read(url: input, type: type)
+    case .image: return try ImageReader.read(url: input, embed: embedImages)
+    case .media: return try await MediaReader.read(url: input, type: type)
+    }
+  }
+
   public func run(_ job: JobSpec, progress: Progress) async throws -> [URL] {
     let output = job.capability.output
     let asHTML = output == .html
@@ -48,14 +58,7 @@ public struct DocumentBackend: Backend {
       throw BackendError.unreadable(input)
     }
 
-    let document: Document
-    switch kind {
-    case .pdf: document = try await PDFReader.read(url: input)
-    case .rich: document = try await RichReader.read(url: input, type: type)
-    case .text: document = try TextReader.read(url: input, type: type)
-    case .image: document = try ImageReader.read(url: input, embed: asHTML)
-    case .media: document = try await MediaReader.read(url: input, type: type)
-    }
+    let document = try await Self.load(input, type: type, kind: kind, embedImages: asHTML)
     try Task.checkCancellation()
 
     let text = asHTML ? HTMLWriter.render(document) : MarkdownWriter.render(document)
