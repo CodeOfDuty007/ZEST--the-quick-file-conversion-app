@@ -297,7 +297,7 @@ public struct RedactBackend: ToolBackend {
     var rects: [CGRect] = []
     var image: CGImage?
     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      guard let rendered = render() else { return nil }
+      guard let rendered = render() else { throw BackendError.encodeFailed("page render") }
       image = rendered
       rects = try Self.sensitiveRects(in: rendered, padding: Self.imagePadding)
     } else {
@@ -316,6 +316,9 @@ public struct RedactBackend: ToolBackend {
       if let rendered = render() {
         rects += try Self.sensitiveRects(in: rendered, padding: Self.imagePadding)
         if !rects.isEmpty { image = rendered }
+      } else if !rects.isEmpty {
+        // Never fall back to the original page when it needs redacting.
+        throw BackendError.encodeFailed("page render")
       }
     }
     guard let image, !rects.isEmpty else { return nil }
@@ -332,9 +335,10 @@ public struct RedactBackend: ToolBackend {
       try Task.checkCancellation()
       guard let page = source.page(at: index) else { continue }
       let box = page.bounds(for: .mediaBox)
-      if let (image, rects) = try pageRects(page, render: { renderPage(page) }),
-        let burned = burn(rects, into: image)
-      {
+      if let (image, rects) = try pageRects(page, render: { renderPage(page) }) {
+        guard let burned = burn(rects, into: image) else {
+          throw BackendError.encodeFailed(out.lastPathComponent)
+        }
         let nsImage = NSImage(cgImage: burned, size: box.size)
         if let raster = PDFPage(image: nsImage, options: [.mediaBox: NSValue(rect: box)]) {
           result.insert(raster, at: result.pageCount)

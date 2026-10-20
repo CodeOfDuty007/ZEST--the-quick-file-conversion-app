@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
         return
       }
+      if !editorOnly { Self.registerAsMain() }
       NSApp.setActivationPolicy(.accessory)
       setUpStatusItem()
       if !editorOnly { WheelController.shared.start() }
@@ -57,9 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     guard let id = Bundle.main.bundleIdentifier else { return nil }
     let me = ProcessInfo.processInfo.processIdentifier
     func running() -> NSRunningApplication? {
-      NSRunningApplication.runningApplications(withBundleIdentifier: id)
+      // Only a process that registered itself as the main app counts: an editor opened with
+      // `--edit` shares the bundle id but must never make the main app quit.
+      let main = Self.registeredMainPID()
+      return NSRunningApplication.runningApplications(withBundleIdentifier: id)
         .first {
-          $0.processIdentifier != me && !$0.isTerminated
+          $0.processIdentifier != me && $0.processIdentifier == main && !$0.isTerminated
             && ($0.launchDate ?? .distantPast) <= (NSRunningApplication.current.launchDate ?? .distantFuture)
         }
     }
@@ -70,6 +74,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       Thread.sleep(forTimeInterval: 0.1)
     }
     return running()
+  }
+
+  private static var lockURL: URL {
+    URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("org.zest.main.pid")
+  }
+
+  private static func registeredMainPID() -> pid_t? {
+    (try? String(contentsOf: lockURL, encoding: .utf8)).flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+  }
+
+  private static func registerAsMain() {
+    try? "\(ProcessInfo.processInfo.processIdentifier)".write(to: lockURL, atomically: true, encoding: .utf8)
   }
 
   /// `Zest --edit crop.image /path/to/file` opens an editor directly (smoke tests, scripts).
