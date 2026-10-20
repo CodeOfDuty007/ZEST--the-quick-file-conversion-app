@@ -259,6 +259,7 @@ final class WheelController: ObservableObject {
       case .convert(let type):
         guard let option = options[type], option.routes.count == sources.count else {
           self?.log.log("FAILED: no route to \(node.title)")
+          self?.present(problems: ["no route to \(node.title)"], title: node.title, produced: 0)
           return
         }
         // All files convert at once, a few at a time; one failing never stops the rest.
@@ -280,6 +281,7 @@ final class WheelController: ObservableObject {
       case .tool(let id):
         guard let tool = router.tools.first(where: { $0.id == id }) else {
           self?.log.log("FAILED: unknown tool \(id)")
+          self?.present(problems: ["unknown tool \(id)"], title: node.title, produced: 0)
           return
         }
         // Editors open a window; everything else runs straight through the pipeline.
@@ -288,6 +290,7 @@ final class WheelController: ObservableObject {
             self?.log.log("Opened \(node.title) editor for \(file.lastPathComponent)")
           } else {
             self?.log.log("FAILED: could not open the \(node.title) editor")
+            self?.present(problems: sources.map { "\($0.lastPathComponent): could not open the \(node.title) editor" }, title: node.title, produced: 0)
           }
           return
         }
@@ -301,7 +304,7 @@ final class WheelController: ObservableObject {
           }
         } catch {
           failures += 1
-          problems.append("\(node.title): \(error.localizedDescription)")
+          problems += sources.map { "\($0.lastPathComponent): \(error.localizedDescription)" }
           self?.log.log("FAILED \(node.title): \(error.localizedDescription)")
         }
 
@@ -322,8 +325,15 @@ final class WheelController: ObservableObject {
   private func present(problems: [String], title: String, produced: Int) {
     let alert = NSAlert()
     alert.messageText = produced == 0 ? "\(title) did nothing" : "\(title) finished with problems"
-    alert.informativeText = problems.prefix(8).joined(separator: "\n")
-      + (problems.count > 8 ? "\n…and \(problems.count - 8) more" : "")
+    alert.informativeText = "\(problems.count) file\(problems.count == 1 ? "" : "s") not done:"
+    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 120))
+    text.string = problems.joined(separator: "\n")
+    text.isEditable = false
+    text.font = .systemFont(ofSize: 12)
+    let scroll = NSScrollView(frame: text.frame)
+    scroll.documentView = text
+    scroll.hasVerticalScroller = true
+    alert.accessoryView = scroll
     alert.alertStyle = .warning
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
