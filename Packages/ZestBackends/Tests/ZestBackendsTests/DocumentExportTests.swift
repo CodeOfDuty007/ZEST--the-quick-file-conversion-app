@@ -84,4 +84,14 @@ final class DocumentExportTests: XCTestCase {
     let txt = try await convert(imageOnly, to: .plainText)
     XCTAssertTrue(try String(contentsOf: txt[0], encoding: .utf8).contains("photo.png"))
   }
+
+  func testMarkdownWithOnlyStructureStillConverts() async throws {
+    let rule = dir.appendingPathComponent("rule.md")
+    try Data("---\n".utf8).write(to: rule)
+    let html = try await convert(rule, to: .html)
+    XCTAssertTrue(try String(contentsOf: html[0], encoding: .utf8).contains("<hr>"))
+    let table = dir.appendingPathComponent("table.md")
+    try Data("| a | b |\n| --- | --- |\n| 1 | 2 |\n".utf8).write(to: table)
+    XCTAssertNoThrow(try String(contentsOf: try await convert(table, to: .html)[0], encoding: .utf8))
+  }
 }

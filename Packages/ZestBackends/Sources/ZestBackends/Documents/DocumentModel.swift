@@ -358,9 +358,9 @@ extension Document {
       case .heading(_, let i), .paragraph(let i), .quote(let i), .listItem(_, _, let i):
         return !i.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       case .code(_, let t): return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      case .table(let h, let rows): return !(h + rows.flatMap { $0 }).flatMap { $0 }.isEmpty
+      case .table(let h, let rows): return !(h.isEmpty && rows.isEmpty)
       case .image, .media: return true
-      case .rule: return false
+      case .rule: return true
       }
     }
   }
