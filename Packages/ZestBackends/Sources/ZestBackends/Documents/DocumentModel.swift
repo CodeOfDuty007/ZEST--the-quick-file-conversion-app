@@ -349,3 +349,19 @@ enum HTMLWriter {
     return value.isEmpty ? nil : value
   }
 }
+
+extension Document {
+  /// True when no block carries any text, so a conversion would write an empty file.
+  var isEmpty: Bool {
+    !blocks.contains { block in
+      switch block {
+      case .heading(_, let i), .paragraph(let i), .quote(let i), .listItem(_, _, let i):
+        return !i.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      case .code(_, let t): return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      case .table(let h, let rows): return !(h + rows.flatMap { $0 }).flatMap { $0 }.isEmpty
+      case .image, .media: return true
+      case .rule: return false
+      }
+    }
+  }
+}

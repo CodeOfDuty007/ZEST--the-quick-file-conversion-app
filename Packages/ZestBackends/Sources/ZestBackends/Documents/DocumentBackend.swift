@@ -59,6 +59,7 @@ public struct DocumentBackend: Backend {
     }
 
     let document = try await Self.load(input, type: type, kind: kind, embedImages: asHTML)
+    if document.isEmpty { throw BackendError.nothingToConvert(input) }
     try Task.checkCancellation()
 
     let text = asHTML ? HTMLWriter.render(document) : MarkdownWriter.render(document)

@@ -41,6 +41,7 @@ public struct DocumentExportBackend: Backend {
       kind != .image, kind != .media
     else { throw BackendError.unreadable(input) }
     let document = try await DocumentBackend.load(input, type: type, kind: kind, embedImages: false)
+    if document.isEmpty { throw BackendError.nothingToConvert(input) }
     try Task.checkCancellation()
 
     let output = job.capability.output
@@ -108,7 +109,7 @@ enum PlainTextWriter {
       case .table(let header, let rows):
         for row in [header] + rows { lines.append(row.map(text).joined(separator: "\t")) }
         lines.append("")
-      case .image(let alt, _, _): lines.append(alt); lines.append("")
+      case .image(let alt, let src, _): lines.append(alt.isEmpty ? src : alt); lines.append("")
       case .media(_, let name, _): lines.append(name); lines.append("")
       case .rule: lines.append("----------"); lines.append("")
       }
@@ -176,8 +177,8 @@ enum AttributedBuilder {
           }
           paragraph(line, after: 2)
         }
-      case .image(let alt, _, _):
-        paragraph(runs([Inline(alt, italic: true)], size: 12))
+      case .image(let alt, let src, _):
+        paragraph(runs([Inline(alt.isEmpty ? src : alt, italic: true)], size: 12))
       case .media(_, let name, _):
         paragraph(runs([Inline(name, italic: true)], size: 12))
       case .rule:

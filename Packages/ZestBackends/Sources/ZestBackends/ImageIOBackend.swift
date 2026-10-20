@@ -5,12 +5,14 @@ import ZestCore
 
 public enum BackendError: Error, LocalizedError {
   case unreadable(URL)
+  case nothingToConvert(URL)
   case encodeFailed(String)
   case processFailed(status: Int32, stderr: String)
 
   public var errorDescription: String? {
     switch self {
     case .unreadable(let url): return "\(url.lastPathComponent) could not be read."
+    case .nothingToConvert(let url): return "\(url.lastPathComponent) has no content to convert."
     case .encodeFailed(let name): return "Could not write \(name)."
     case .processFailed(let status, let stderr):
       let tail = stderr.split(separator: "\n").suffix(3).joined(separator: "\n")

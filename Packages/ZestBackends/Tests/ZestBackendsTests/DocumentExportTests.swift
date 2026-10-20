@@ -69,4 +69,19 @@ final class DocumentExportTests: XCTestCase {
     let readBack = try NSAttributedString(url: word[0], options: [:], documentAttributes: nil)
     XCTAssertTrue(readBack.string.contains("Findings"))
   }
+
+  func testEmptyDocumentIsRefusedNotWrittenBlank() async throws {
+    let empty = dir.appendingPathComponent("blank.txt")
+    try Data("  \n".utf8).write(to: empty)
+    do {
+      _ = try await convert(empty, to: docx)
+      XCTFail("expected an error")
+    } catch {
+      XCTAssertTrue(error.localizedDescription.contains("no content"))
+    }
+    let imageOnly = dir.appendingPathComponent("pic.md")
+    try Data("![](photo.png)\n".utf8).write(to: imageOnly)
+    let txt = try await convert(imageOnly, to: .plainText)
+    XCTAssertTrue(try String(contentsOf: txt[0], encoding: .utf8).contains("photo.png"))
+  }
 }
