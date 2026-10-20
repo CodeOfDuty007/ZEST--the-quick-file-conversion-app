@@ -11,6 +11,8 @@ public enum Formats {
   public static let wma = type(ext: "wma")
   public static let wmv = type(ext: "wmv")
   public static let avif = type(ext: "avif")
+  /// Declared by macOS itself; `importedAs` keeps the identifier usable if a Mac lacks it.
+  public static let markdown = UTType(importedAs: "net.daringfireball.markdown", conformingTo: .plainText)
 
   private static func type(ext: String) -> UTType {
     UTType(filenameExtension: ext) ?? .data
@@ -26,6 +28,8 @@ public enum Formats {
     .mp3: "mp3",
     .wav: "wav",
     .aiff: "aiff",
+    markdown: "md",
+    .html: "html",
   ]
 
   public static func fileExtension(for type: UTType) -> String {

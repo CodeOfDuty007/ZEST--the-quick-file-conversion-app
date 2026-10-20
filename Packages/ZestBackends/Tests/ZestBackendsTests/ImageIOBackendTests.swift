@@ -149,10 +149,12 @@ final class ImageFormatExpansionTests: XCTestCase {
     XCTAssertTrue(route.steps[0].isLosslessOutput)
   }
 
-  func testPNGOffersAtMostEightOutputs() {
+  func testPNGOffersImageDocumentAndTextOutputs() {
     let outputs = Catalog().router.resolve(inputs: [.png]).available.map(\.output)
     XCTAssertTrue(outputs.contains(.pdf))
-    XCTAssertLessThanOrEqual(outputs.count, 8, "\(outputs)")
+    XCTAssertTrue(outputs.contains(Formats.markdown))
+    XCTAssertTrue(outputs.contains(.html))
+    XCTAssertLessThanOrEqual(outputs.count, 12, "\(outputs)")
   }
 }
 

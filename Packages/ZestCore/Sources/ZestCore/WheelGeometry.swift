@@ -61,11 +61,6 @@ public struct WheelGeometry: Sendable, Equatable {
     return distance <= buttonRadius + hitSlop ? .wedge(index) : .gap
   }
 
-  /// True once the pointer has moved far enough out that the wheel should close.
-  public func shouldClose(dx: Double, dy: Double) -> Bool {
-    (dx * dx + dy * dy).squareRoot() > outerRadius + closeMargin
-  }
-
   /// Angle of a wedge's centre, clockwise from 12 o'clock, in radians.
   public func centreAngle(of index: Int) -> Double { Double(index) * sweep }
 

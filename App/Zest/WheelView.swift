@@ -25,9 +25,9 @@ struct WheelView: View {
         .frame(width: (geometry.outerRadius + geometry.closeMargin) * 2)
         .accessibilityHidden(true)
 
-      // One glass container per level: the outgoing ring leaves as a whole instead of its
-      // glass merging with the incoming buttons while the two overlap. The new ring grows
-      // in while the old one just fades, so descending and going back read as one motion.
+      // One glass container per level. The id gives each level a fresh view: the old ring is
+      // removed outright (a removal transition can be left behind when the panel is hidden
+      // mid-animation, which showed up as a ghost ring) and the new one grows in on appear.
       GlassBackdrop {
         ForEach(Array(model.nodes.enumerated()), id: \.element.id) { index, node in
           let angle = geometry.centreAngle(of: index)
@@ -39,21 +39,31 @@ struct WheelView: View {
           .offset(x: radius * sin(angle), y: -radius * cos(angle))
         }
       }
+      .modifier(RingAppear(reduceMotion: reduceMotion))
       .id(model.levelID)
-      .transition(
-        .asymmetric(
-          insertion: .opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.88)),
-          removal: .opacity.animation(.easeOut(duration: 0.08))))
 
       CentreBadge(model: model, radius: geometry.deadZoneRadius)
     }
-    .animation(.easeOut(duration: 0.18), value: model.levelID)
     .frame(width: Self.side, height: Self.side)
     .scaleEffect(model.isOpen ? 1 : (reduceMotion ? 1 : 0.85))
     .opacity(model.isOpen ? 1 : 0)
     .animation(.easeOut(duration: 0.12), value: model.isOpen)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Zest wheel")
+  }
+}
+
+/// Grows a ring in when its view first appears. Fresh state per level (see `.id`), so a
+/// ring that was replaced never lingers and a reopened wheel always starts from rest.
+private struct RingAppear: ViewModifier {
+  let reduceMotion: Bool
+  @State private var shown = false
+
+  func body(content: Content) -> some View {
+    content
+      .opacity(shown ? 1 : 0)
+      .scaleEffect(shown || reduceMotion ? 1 : 0.88)
+      .onAppear { withAnimation(.easeOut(duration: 0.16)) { shown = true } }
   }
 }
 

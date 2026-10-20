@@ -31,7 +31,7 @@ public struct ImageIOBackend: Backend {
 
   /// ImageIO can write dozens of niche formats (PSD, ICNS, EXR, PVR…). Only these
   /// belong on a wheel capped at eight wedges.
-  private static let userFacingOutputs: Set<UTType> = [
+  static let userFacingOutputs: Set<UTType> = [
     .jpeg, .png, .heic, .tiff, .gif, .bmp, .webP, Formats.avif,
   ]
 
