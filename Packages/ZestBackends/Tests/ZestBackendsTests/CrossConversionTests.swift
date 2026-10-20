@@ -128,4 +128,22 @@ final class PDFCompressTests: XCTestCase {
       XCTAssertFalse(report.skipped.isEmpty)
     }
   }
+
+  func testTextPDFIsRefusedNotFlattened() async throws {
+    let catalog = Catalog()
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("zest-pt-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("memo.pdf")
+    var box = CGRect(x: 0, y: 0, width: 300, height: 200)
+    let ctx = try XCTUnwrap(CGContext(url as CFURL, mediaBox: &box, nil))
+    ctx.beginPDFPage(nil)
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Real text", attributes: [.font: NSFont.systemFont(ofSize: 14)]))
+    ctx.textPosition = CGPoint(x: 20, y: 100); CTLineDraw(line, ctx)
+    ctx.endPDFPage(); ctx.closePDF()
+    let tool = try XCTUnwrap(catalog.router.tools.first { $0.id == "compress.pdf.75" })
+    let report = try await catalog.pipeline.runTool(tool, inputs: [url])
+    XCTAssertTrue(report.published.isEmpty)
+    XCTAssertTrue(report.skipped.first?.reason.contains("selectable text") == true)
+  }
 }

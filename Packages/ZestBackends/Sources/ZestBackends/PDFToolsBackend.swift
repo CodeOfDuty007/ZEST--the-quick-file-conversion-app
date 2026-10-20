@@ -187,6 +187,12 @@ public struct PDFToolsBackend: ToolBackend {
     for (index, url) in job.inputs.enumerated() {
       try Task.checkCancellation()
       let document = try open(url)
+      // Compression flattens pages to images, so anything that would be lost is refused,
+      // not dropped silently: selectable text, links and form fields, bookmarks.
+      if let lost = Self.contentFlatteningWouldLose(document) {
+        skipped.append(ToolSkip(source: index, reason: "Has \(lost) that compressing would remove"))
+        continue
+      }
       let original = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
       let target = Int(Double(original) * percent / 100)
       guard let data = try Self.shrink(document, targetBytes: target) else {
@@ -198,6 +204,18 @@ public struct PDFToolsBackend: ToolBackend {
       outputs.append(ToolOutput(url: out, source: index))
     }
     return ToolResult(outputs: outputs, skipped: skipped)
+  }
+
+  static func contentFlatteningWouldLose(_ document: PDFDocument) -> String? {
+    if document.outlineRoot != nil { return "bookmarks" }
+    for index in 0..<document.pageCount {
+      guard let page = document.page(at: index) else { continue }
+      if !page.annotations.isEmpty { return "links or annotations" }
+      if !(page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return "selectable text"
+      }
+    }
+    return nil
   }
 
   private static func shrink(_ document: PDFDocument, targetBytes: Int) throws -> Data? {
