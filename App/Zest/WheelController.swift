@@ -325,14 +325,23 @@ final class WheelController: ObservableObject {
   private func present(problems: [String], title: String, produced: Int) {
     let alert = NSAlert()
     alert.messageText = produced == 0 ? "\(title) did nothing" : "\(title) finished with problems"
-    alert.informativeText = "\(problems.count) file\(problems.count == 1 ? "" : "s") not done:"
-    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 380, height: 120))
+    alert.informativeText = "Details below. Scroll if the list is long."
+    let width: CGFloat = 400
+    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
     text.string = problems.joined(separator: "\n")
     text.isEditable = false
     text.font = .systemFont(ofSize: 12)
-    let scroll = NSScrollView(frame: text.frame)
+    text.isVerticallyResizable = true
+    text.isHorizontallyResizable = false
+    text.autoresizingMask = [.width]
+    text.textContainer?.widthTracksTextView = true
+    text.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+    text.sizeToFit()
+    let scroll = NSScrollView(
+      frame: NSRect(x: 0, y: 0, width: width, height: min(max(text.frame.height + 8, 40), 260)))
     scroll.documentView = text
     scroll.hasVerticalScroller = true
+    scroll.autohidesScrollers = false
     alert.accessoryView = scroll
     alert.alertStyle = .warning
     NSApp.activate(ignoringOtherApps: true)
