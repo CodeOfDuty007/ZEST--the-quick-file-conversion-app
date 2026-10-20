@@ -92,6 +92,7 @@ final class DocumentExportTests: XCTestCase {
     XCTAssertTrue(try String(contentsOf: html[0], encoding: .utf8).contains("<hr>"))
     let table = dir.appendingPathComponent("table.md")
     try Data("| a | b |\n| --- | --- |\n| 1 | 2 |\n".utf8).write(to: table)
-    XCTAssertNoThrow(try String(contentsOf: try await convert(table, to: .html)[0], encoding: .utf8))
+    let tableHTML = try await convert(table, to: .html)
+    XCTAssertTrue(try String(contentsOf: tableHTML[0], encoding: .utf8).contains("<table>"))
   }
 }
