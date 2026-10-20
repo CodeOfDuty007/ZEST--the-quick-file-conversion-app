@@ -316,8 +316,9 @@ public struct RedactBackend: ToolBackend {
       if let rendered = render() {
         rects += try Self.sensitiveRects(in: rendered, padding: Self.imagePadding)
         if !rects.isEmpty { image = rendered }
-      } else if !rects.isEmpty {
-        // Never fall back to the original page when it needs redacting.
+      } else {
+        // An unrendered page cannot be checked for text inside images, so it is never
+        // passed through as if it were clean.
         throw BackendError.encodeFailed("page render")
       }
     }
