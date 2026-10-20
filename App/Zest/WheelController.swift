@@ -253,6 +253,7 @@ final class WheelController: ObservableObject {
     Task { [weak self] in
       var outputs: [URL] = []
       var failures = 0
+      var problems: [String] = []
 
       switch node.action {
       case .convert(let type):
@@ -271,6 +272,7 @@ final class WheelController: ObservableObject {
             }
           case .failure(let error):
             failures += 1
+            problems.append("\(item.input.lastPathComponent): \(error.localizedDescription)")
             self?.log.log("FAILED \(item.input.lastPathComponent): \(error.localizedDescription)")
           }
         }
@@ -294,10 +296,12 @@ final class WheelController: ObservableObject {
           outputs = report.published
           for url in report.published { self?.log.log("\(node.title) → \(url.lastPathComponent)") }
           for skip in report.skipped {
+            problems.append("\(skip.input.lastPathComponent): \(skip.reason)")
             self?.log.log("Skipped \(skip.input.lastPathComponent): \(skip.reason)")
           }
         } catch {
           failures += 1
+          problems.append("\(node.title): \(error.localizedDescription)")
           self?.log.log("FAILED \(node.title): \(error.localizedDescription)")
         }
 
@@ -309,7 +313,19 @@ final class WheelController: ObservableObject {
       let intact = sources.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
       self?.log.log("Source files still present after drop: \(intact) (\(failures) failure(s))")
       if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+      if !problems.isEmpty { self?.present(problems: problems, title: node.title, produced: outputs.count) }
     }
     return true
+  }
+
+  /// Nothing may fail or be skipped without the user seeing why; the log is not enough.
+  private func present(problems: [String], title: String, produced: Int) {
+    let alert = NSAlert()
+    alert.messageText = produced == 0 ? "\(title) did nothing" : "\(title) finished with problems"
+    alert.informativeText = problems.prefix(8).joined(separator: "\n")
+      + (problems.count > 8 ? "\n…and \(problems.count - 8) more" : "")
+    alert.alertStyle = .warning
+    NSApp.activate(ignoringOtherApps: true)
+    alert.runModal()
   }
 }
