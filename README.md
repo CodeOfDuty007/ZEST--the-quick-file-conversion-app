@@ -16,16 +16,16 @@ the cursor. Four round glass buttons are the top level:
 
 | Segment | What is inside |
 | --- | --- |
-| **Convert** | Every format your Mac and the installed engines can produce from the selection |
+| **Convert** | Every format your Mac and the installed engines can produce from the selection, including **Markdown** and **HTML** from any file (PDF, images via on-device OCR, Word/RTF/HTML/text, audio and video as a file description) and PDF to every image format |
 | **Compress** | Images, video, audio to a target size; PDF compression is planned |
-| **Edit** | Crop, annotate, redact and add backgrounds to images; trim, crop, redact video and bleep audio (in progress) |
+| **Edit** | **Auto-redact** sensitive data (emails, phones, card and ID numbers) in PDFs, images and text, removing it for good; crop, annotate, redact and add backgrounds to images; trim, crop, redact video and bleep audio (in progress) |
 | **Files** | Merge, split and create PDFs, image collages, strip metadata, audio to video |
 
 Hold a file over a segment for about half a second to open it, hold the centre to go back,
 and release over a leaf to run it. Output is a new copy saved beside the original; the
 original is never modified.
 
-- **Mixed selections.** Select a HEIC and a PNG, convert both to JPEG in one go.
+- **Mixed selections.** Select a HEIC, a PNG and a PDF, convert them all to JPEG or Markdown in one go. Files convert at the same time, a few at once.
 - **Honest routing.** If a conversion cannot be done, Zest says why instead of hiding it.
 - **Local and private.** No accounts, no network calls, no telemetry.
 - **Native.** Swift, AppKit and SwiftUI with Liquid Glass on macOS 26 and materials before.

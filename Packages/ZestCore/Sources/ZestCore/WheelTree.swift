@@ -44,8 +44,9 @@ public enum WheelTree {
 
   /// Common formats first, so the ring is stable between drags.
   private static let popularity: [UTType] = [
-    .jpeg, .png, .heic, .pdf, .mpeg4Movie, .mp3, .mpeg4Audio, .wav, .tiff, .gif, .webP,
-    .quickTimeMovie, .bmp,
+    .jpeg, .png, .heic, .pdf, Formats.markdown, .html,
+    UTType("org.openxmlformats.wordprocessingml.document") ?? .data, .rtf, .plainText, .mpeg4Movie, .mp3, .mpeg4Audio, .wav,
+    .tiff, .gif, .webP, .quickTimeMovie, .bmp,
   ]
 
   /// - Parameter dimmed: per-tool reasons for this particular selection that types alone
@@ -125,6 +126,8 @@ public enum WheelTree {
     if type.conforms(to: .audio) { return "waveform" }
     if type.conforms(to: .movie) { return "film" }
     if type.conforms(to: .pdf) { return "doc.richtext" }
+    if type == .html { return "chevron.left.forwardslash.chevron.right" }
+    if type == Formats.markdown { return "text.alignleft" }
     if type.conforms(to: .archive) { return "archivebox" }
     return "doc"
   }

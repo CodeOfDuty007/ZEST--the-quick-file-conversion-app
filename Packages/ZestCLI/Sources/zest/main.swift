@@ -145,9 +145,9 @@ case "convert":
       continue
     }
     do {
-      let out = try await catalog.pipeline.run(
+      let outs = try await catalog.pipeline.runAll(
         input: url, route: route, params: params, destinationDirectory: destination)
-      print(out.path)
+      for out in outs { print(out.path) }
     } catch {
       FileHandle.standardError.write(
         Data("zest: \(url.lastPathComponent): \(error.localizedDescription)\n".utf8))

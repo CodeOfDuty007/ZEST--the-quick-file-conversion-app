@@ -23,12 +23,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
     MainActor.assumeIsolated {
+      // Two copies at once each draw their own wheel at the same level, so a stale build
+      // shows through the current one. The first copy keeps running; later ones hand over.
+      // `--edit` launches exist to open an editor in a fresh process, so they are exempt
+      // from the guard and never start a wheel of their own.
+      let editorOnly = CommandLine.arguments.contains("--edit")
+      if !editorOnly, let other = Self.otherRunningInstance() {
+        other.activate()
+        NSApp.terminate(nil)
+        return
+      }
+      if !editorOnly { Self.registerAsMain() }
       NSApp.setActivationPolicy(.accessory)
       setUpStatusItem()
-      WheelController.shared.start()
+      if !editorOnly { WheelController.shared.start() }
       // Phase 0 only: ask straight away so the system prompts appear without hunting
       // for the icon. Real onboarding (F-10) will explain first.
-      WheelController.shared.requestMissingPermissions()
+      if !editorOnly { WheelController.shared.requestMissingPermissions() }
       // The menu-bar icon can be hidden (crowded bar, notch, Menu Bar settings), which
       // makes the app look dead. A window guarantees there is always something to see.
       let firstRun = LaunchAtLogin.isFirstRun
@@ -41,6 +52,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
       openEditorFromArguments()
     }
+  }
+
+  private static func otherRunningInstance() -> NSRunningApplication? {
+    guard let id = Bundle.main.bundleIdentifier else { return nil }
+    let me = ProcessInfo.processInfo.processIdentifier
+    func running() -> NSRunningApplication? {
+      // Only a process that registered itself as the main app counts: an editor opened with
+      // `--edit` shares the bundle id but must never make the main app quit.
+      let main = Self.registeredMainPID()
+      return NSRunningApplication.runningApplications(withBundleIdentifier: id)
+        .first {
+          $0.processIdentifier != me && $0.processIdentifier == main && !$0.isTerminated
+            && ($0.launchDate ?? .distantPast) <= (NSRunningApplication.current.launchDate ?? .distantFuture)
+        }
+    }
+    // `make launch` kills the old copy and opens the new one straight away; give a copy that
+    // is on its way out a moment to finish quitting instead of mistaking it for a duplicate.
+    for _ in 0..<20 {
+      guard running() != nil else { return nil }
+      Thread.sleep(forTimeInterval: 0.1)
+    }
+    return running()
+  }
+
+  private static var lockURL: URL {
+    URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("org.zest.main.pid")
+  }
+
+  private static func registeredMainPID() -> pid_t? {
+    (try? String(contentsOf: lockURL, encoding: .utf8)).flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+  }
+
+  private static func registerAsMain() {
+    try? "\(ProcessInfo.processInfo.processIdentifier)".write(to: lockURL, atomically: true, encoding: .utf8)
   }
 
   /// `Zest --edit crop.image /path/to/file` opens an editor directly (smoke tests, scripts).

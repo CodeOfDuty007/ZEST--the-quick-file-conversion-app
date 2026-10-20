@@ -23,6 +23,7 @@ public struct JobPipeline: Sendable {
     self.tempRoot = tempRoot
   }
 
+  /// Runs a route that produces one file and returns it.
   /// - Returns: the URL of the published output.
   public func run(
     input: URL,
@@ -31,6 +32,22 @@ public struct JobPipeline: Sendable {
     destinationDirectory: URL? = nil,
     progress: Progress = Progress()
   ) async throws -> URL {
+    let outputs = try await runAll(
+      input: input, route: route, params: params, destinationDirectory: destinationDirectory,
+      progress: progress)
+    guard let first = outputs.first else { throw ZestError.noOutputProduced }
+    return first
+  }
+
+  /// Runs a route and returns every published file. A step may produce several (a PDF
+  /// becomes one image per page); the next step then runs on each of them.
+  public func runAll(
+    input: URL,
+    route: Route,
+    params: [String: String] = [:],
+    destinationDirectory: URL? = nil,
+    progress: Progress = Progress()
+  ) async throws -> [URL] {
     let fm = FileManager.default
     guard fm.fileExists(atPath: input.path) else { throw ZestError.sourceMissing(input) }
 
@@ -38,19 +55,23 @@ public struct JobPipeline: Sendable {
     try fm.createDirectory(at: work, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: work) }
 
-    var current = input
+    var current = [input]
     for (index, step) in route.steps.enumerated() {
       try Task.checkCancellation()
       guard let backend = backends[step.backendID] else {
         throw ZestError.backendMissing(step.backendID)
       }
-      let stepDir = work.appendingPathComponent("step\(index)", isDirectory: true)
-      try fm.createDirectory(at: stepDir, withIntermediateDirectories: true)
-
-      let spec = JobSpec(input: current, capability: step, outputDirectory: stepDir, params: params)
-      let outputs = try await backend.run(spec, progress: progress)
-      guard let produced = outputs.first else { throw ZestError.noOutputProduced }
-      try Self.validate(produced)
+      var produced: [URL] = []
+      for (fileIndex, file) in current.enumerated() {
+        try Task.checkCancellation()
+        let stepDir = work.appendingPathComponent("step\(index)-\(fileIndex)", isDirectory: true)
+        try fm.createDirectory(at: stepDir, withIntermediateDirectories: true)
+        let spec = JobSpec(input: file, capability: step, outputDirectory: stepDir, params: params)
+        let outputs = try await backend.run(spec, progress: progress)
+        guard !outputs.isEmpty else { throw ZestError.noOutputProduced }
+        for output in outputs { try Self.validate(output) }
+        produced += outputs
+      }
       current = produced
     }
 
@@ -58,39 +79,107 @@ public struct JobPipeline: Sendable {
     return try publish(current, source: input, route: route, directory: destinationDirectory)
   }
 
+  /// One input's outcome in a batch.
+  public struct BatchItem: Sendable {
+    public let input: URL
+    public let result: Result<[URL], any Error>
+  }
+
+  /// Converts several files at once, up to `maxConcurrent` at a time. Results come back in
+  /// the order of `inputs`; one file failing never stops the others.
+  public func runBatch(
+    inputs: [URL],
+    routes: [Route],
+    params: [String: String] = [:],
+    destinationDirectory: URL? = nil,
+    maxConcurrent: Int = 4
+  ) async -> [BatchItem] {
+    precondition(inputs.count == routes.count, "one route per input")
+    let limit = max(1, maxConcurrent)
+    var results = [BatchItem?](repeating: nil, count: inputs.count)
+
+    await withTaskGroup(of: (Int, BatchItem).self) { group in
+      var next = 0
+      func launch() {
+        guard next < inputs.count else { return }
+        let index = next
+        next += 1
+        group.addTask {
+          let input = inputs[index]
+          do {
+            let outputs = try await self.runAll(
+              input: input, route: routes[index], params: params,
+              destinationDirectory: destinationDirectory)
+            return (index, BatchItem(input: input, result: .success(outputs)))
+          } catch {
+            return (index, BatchItem(input: input, result: .failure(error)))
+          }
+        }
+      }
+      for _ in 0..<min(limit, inputs.count) { launch() }
+      while let (index, item) = await group.next() {
+        results[index] = item
+        launch()
+      }
+    }
+    return results.enumerated().map { index, item in
+      item ?? BatchItem(input: inputs[index], result: .failure(CancellationError()))
+    }
+  }
+
   private static func validate(_ url: URL) throws {
     let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
     guard size > 0 else { throw ZestError.emptyOutput(url) }
   }
 
-  private func publish(_ file: URL, source: URL, route: Route, directory: URL?) throws -> URL {
+  /// Publishes every file beside the source, or none: a failure part-way removes whatever
+  /// was already placed. One file is named after the source; several keep their own names.
+  private func publish(_ files: [URL], source: URL, route: Route, directory: URL?) throws -> [URL] {
     let fm = FileManager.default
     let dir = directory ?? source.deletingLastPathComponent()
-    let base = source.deletingPathExtension().lastPathComponent
     let ext = Formats.fileExtension(for: route.output)
+    let sourceBase = source.deletingPathExtension().lastPathComponent
 
     // Stage next to the destination first. If the temp folder is on another volume the
     // move is a copy, and a crash mid-copy must not leave a half-written file under its
     // real name. The final rename inside one folder is atomic.
-    let staged = dir.appendingPathComponent(".zest-\(UUID().uuidString).part")
-    try fm.moveItem(at: file, to: staged)
-    var published = false
-    defer { if !published { try? fm.removeItem(at: staged) } }
+    var staged: [(file: URL, base: String)] = []
+    var finals: [URL] = []
+    var committed = false
+    defer {
+      if !committed {
+        for entry in staged { try? fm.removeItem(at: entry.file) }
+        for url in finals { try? fm.removeItem(at: url) }
+      }
+    }
+    for file in files {
+      let part = dir.appendingPathComponent(".zest-\(UUID().uuidString).part")
+      try fm.moveItem(at: file, to: part)
+      let base = files.count == 1 ? sourceBase : file.deletingPathExtension().lastPathComponent
+      staged.append((part, base))
+    }
     // A cross-volume stage can take long enough for the job to be cancelled meanwhile.
     try Task.checkCancellation()
 
     // The rename fails if the target appeared since we looked, so retry with the next number.
-    for _ in 0..<100 {
-      let target = OutputNaming.uniqueURL(directory: dir, baseName: base, ext: ext)
-      do {
-        try fm.moveItem(at: staged, to: target)
-        published = true
-        return target
-      } catch let error as CocoaError where error.code == .fileWriteFileExists {
-        continue
+    for entry in staged {
+      var placed = false
+      for _ in 0..<100 {
+        let target = OutputNaming.uniqueURL(directory: dir, baseName: entry.base, ext: ext)
+        do {
+          try fm.moveItem(at: entry.file, to: target)
+          finals.append(target)
+          placed = true
+          break
+        } catch let error as CocoaError where error.code == .fileWriteFileExists {
+          continue
+        }
       }
+      if !placed { throw ZestError.couldNotPublish(source) }
+      staged.removeAll { $0.file == entry.file }
     }
-    throw ZestError.couldNotPublish(source)
+    committed = true
+    return finals
   }
 
   // MARK: Tools

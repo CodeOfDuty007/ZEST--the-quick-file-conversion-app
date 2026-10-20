@@ -25,7 +25,6 @@ public enum PlannedTools {
     editor("bleep", "Bleep", "speaker.slash", accepts: audio),
     soon("split-video", "Split", "square.split.2x1", root: .edit, accepts: video),
     soon("join-video", "Join", "plus.rectangle.on.rectangle", root: .edit, accepts: video),
-    soon("compress-pdf", "PDF", "doc.zipper", root: .compress, accepts: [.pdf]),
   ]
 
   /// An editor that opens in the app today.

@@ -39,9 +39,6 @@ final class WheelController: ObservableObject {
   private var dragGeneration = 0
   /// True while the drag is over the wheel, so its drop or cancel callback will still arrive.
   private var pointerOverWheel = false
-  /// Near a screen edge the panel is clamped, so the pointer can start outside the ring.
-  /// Leaving only closes the wheel once the pointer has been inside it.
-  private var hasEnteredRing = false
   private var dwellTimer: Timer?
 
   func start() {
@@ -54,9 +51,13 @@ final class WheelController: ObservableObject {
       self?.log.log("Panel received draggingEntered")
     }
     panel.dropView.onPointer = { [weak self] dx, dy in self?.pointer(dx: dx, dy: dy) ?? [] }
+    // Leaving the panel only clears the hover. The wheel stays up, labels and all, until the
+    // drag ends, so dragging past its edge and back never makes it vanish.
     panel.dropView.onExited = { [weak self] in
+      self?.pointerOverWheel = false
       self?.model.update { $0.pointerLeft() }
-      self?.closeWheel(reason: "draggingExited")
+      self?.dwellTimer?.invalidate()
+      self?.dwellTimer = nil
     }
     panel.dropView.onDrop = { [weak self] dx, dy, urls in
       self?.handleDrop(dx: dx, dy: dy, urls: urls) ?? false
@@ -104,7 +105,6 @@ final class WheelController: ObservableObject {
     dragGeneration += 1
     closeWheel(reason: "new drag started")
     pointerOverWheel = false
-    hasEnteredRing = false
     session = nil
     model.clear()
 
@@ -167,7 +167,6 @@ final class WheelController: ObservableObject {
   private func openWheel(t0: TimeInterval) {
     guard session != nil, !model.isOpen, let panel else { return }
     let idle = t0 - lastDragEnd
-    hasEnteredRing = false
     model.resetToRoot()
     panel.present(at: NSEvent.mouseLocation)
     let t1 = ProcessInfo.processInfo.systemUptime
@@ -193,10 +192,10 @@ final class WheelController: ObservableObject {
   private func pointer(dx: Double, dy: Double) -> NSDragOperation {
     let geometry = model.geometry
     let hit = geometry.hit(dx: dx, dy: dy)
-    if hit != .outside { hasEnteredRing = true }
-    if hasEnteredRing && geometry.shouldClose(dx: dx, dy: dy) {
+    if hit == .outside {
       model.update { $0.pointerLeft() }
-      closeWheel(reason: "pointer left the ring")
+      dwellTimer?.invalidate()
+      dwellTimer = nil
       return []
     }
 
@@ -254,27 +253,35 @@ final class WheelController: ObservableObject {
     Task { [weak self] in
       var outputs: [URL] = []
       var failures = 0
+      var problems: [String] = []
 
       switch node.action {
       case .convert(let type):
         guard let option = options[type], option.routes.count == sources.count else {
           self?.log.log("FAILED: no route to \(node.title)")
+          self?.present(problems: ["no route to \(node.title)"], title: node.title, produced: 0)
           return
         }
-        for (url, route) in zip(sources, option.routes) {
-          do {
-            let out = try await pipeline.run(input: url, route: route)
-            outputs.append(out)
-            self?.log.log("Converted \(url.lastPathComponent) → \(out.lastPathComponent)")
-          } catch {
+        // All files convert at once, a few at a time; one failing never stops the rest.
+        let batch = await pipeline.runBatch(inputs: sources, routes: option.routes)
+        for item in batch {
+          switch item.result {
+          case .success(let urls):
+            outputs += urls
+            for out in urls {
+              self?.log.log("Converted \(item.input.lastPathComponent) → \(out.lastPathComponent)")
+            }
+          case .failure(let error):
             failures += 1
-            self?.log.log("FAILED \(url.lastPathComponent): \(error.localizedDescription)")
+            problems.append("\(item.input.lastPathComponent): \(error.localizedDescription)")
+            self?.log.log("FAILED \(item.input.lastPathComponent): \(error.localizedDescription)")
           }
         }
 
       case .tool(let id):
         guard let tool = router.tools.first(where: { $0.id == id }) else {
           self?.log.log("FAILED: unknown tool \(id)")
+          self?.present(problems: ["unknown tool \(id)"], title: node.title, produced: 0)
           return
         }
         // Editors open a window; everything else runs straight through the pipeline.
@@ -283,6 +290,7 @@ final class WheelController: ObservableObject {
             self?.log.log("Opened \(node.title) editor for \(file.lastPathComponent)")
           } else {
             self?.log.log("FAILED: could not open the \(node.title) editor")
+            self?.present(problems: sources.map { "\($0.lastPathComponent): could not open the \(node.title) editor" }, title: node.title, produced: 0)
           }
           return
         }
@@ -291,10 +299,12 @@ final class WheelController: ObservableObject {
           outputs = report.published
           for url in report.published { self?.log.log("\(node.title) → \(url.lastPathComponent)") }
           for skip in report.skipped {
+            problems.append("\(skip.input.lastPathComponent): \(skip.reason)")
             self?.log.log("Skipped \(skip.input.lastPathComponent): \(skip.reason)")
           }
         } catch {
           failures += 1
+          problems += sources.map { "\($0.lastPathComponent): \(error.localizedDescription)" }
           self?.log.log("FAILED \(node.title): \(error.localizedDescription)")
         }
 
@@ -306,7 +316,35 @@ final class WheelController: ObservableObject {
       let intact = sources.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
       self?.log.log("Source files still present after drop: \(intact) (\(failures) failure(s))")
       if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+      if !problems.isEmpty { self?.present(problems: problems, title: node.title, produced: outputs.count) }
     }
     return true
+  }
+
+  /// Nothing may fail or be skipped without the user seeing why; the log is not enough.
+  private func present(problems: [String], title: String, produced: Int) {
+    let alert = NSAlert()
+    alert.messageText = produced == 0 ? "\(title) did nothing" : "\(title) finished with problems"
+    alert.informativeText = "Details below. Scroll if the list is long."
+    let width: CGFloat = 400
+    let text = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
+    text.string = problems.joined(separator: "\n")
+    text.isEditable = false
+    text.font = .systemFont(ofSize: 12)
+    text.isVerticallyResizable = true
+    text.isHorizontallyResizable = false
+    text.autoresizingMask = [.width]
+    text.textContainer?.widthTracksTextView = true
+    text.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+    text.sizeToFit()
+    let scroll = NSScrollView(
+      frame: NSRect(x: 0, y: 0, width: width, height: min(max(text.frame.height + 8, 40), 260)))
+    scroll.documentView = text
+    scroll.hasVerticalScroller = true
+    scroll.autohidesScrollers = false
+    alert.accessoryView = scroll
+    alert.alertStyle = .warning
+    NSApp.activate(ignoringOtherApps: true)
+    alert.runModal()
   }
 }

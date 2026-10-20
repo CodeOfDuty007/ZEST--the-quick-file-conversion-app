@@ -77,11 +77,6 @@ final class WheelGeometryTests: XCTestCase {
     XCTAssertEqual(empty.hit(dx: 0, dy: 100), .outside)
   }
 
-  func testCloseHappensOnlyPastTheMargin() {
-    XCTAssertFalse(six.shouldClose(dx: 0, dy: 145))
-    XCTAssertTrue(six.shouldClose(dx: 0, dy: 153))
-  }
-
   func testSingleButtonSitsAtTopAndTheRestOfTheRingIsGap() {
     let one = WheelGeometry(wedgeCount: 1)
     XCTAssertEqual(one.hit(dx: 0, dy: one.buttonRingRadius), .wedge(0))

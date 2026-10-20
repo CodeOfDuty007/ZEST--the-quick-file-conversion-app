@@ -18,6 +18,9 @@ public enum ContentSniffer {
       if sniffed == .mpeg4Movie, let byExtension, byExtension.conforms(to: .audio) {
         return byExtension
       }
+      // Word, Excel, Pages, EPUB and many more are ZIP files underneath. Their extension says
+      // which, the header cannot, so a specific extension beats the generic ZIP signature.
+      if sniffed == .zip, let byExtension, byExtension != .zip { return byExtension }
       return sniffed
     }
     return byExtension
