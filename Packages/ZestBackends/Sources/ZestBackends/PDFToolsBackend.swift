@@ -18,7 +18,12 @@ public struct PDFToolsBackend: ToolBackend {
   public func capabilities() -> [Capability] { [] }
 
   public func tools() -> [ToolSpec] {
-    [
+    ImageToolsBackend.percents.map { percent in
+      ToolSpec(
+        id: "compress.pdf.\(percent)", backendID: id, root: .compress, title: "\(percent)%",
+        symbol: "arrow.down.right.and.arrow.up.left", accepts: [.pdf],
+        params: ["percent": "\(percent)"], nameSuffix: " compressed")
+    } + [
       ToolSpec(
         id: "pdf.merge", backendID: id, root: .files, title: "Merge", symbol: "doc.on.doc",
         shape: .group(minimum: 2), accepts: [.pdf], nameSuffix: " merged", groupOutput: .pdf),
@@ -42,6 +47,7 @@ public struct PDFToolsBackend: ToolBackend {
 
   public func runTool(_ job: ToolJob, progress: Progress) async throws -> ToolResult {
     switch job.tool.id {
+    case let id where id.hasPrefix("compress.pdf."): return try compress(job)
     case "pdf.merge": return try merge(job)
     case "images.to.pdf": return try imagesToPDF(job)
     case "pdf.split": return try split(job)
@@ -167,5 +173,90 @@ public struct PDFToolsBackend: ToolBackend {
       outputs.append(ToolOutput(url: out, source: index))
     }
     return ToolResult(outputs: outputs)
+  }
+
+  // MARK: Compress
+
+  /// Shrinks to the chosen share of the original size by re-rendering every page as a
+  /// JPEG, lowering resolution and quality until it fits. Text becomes part of the page
+  /// image, so a file that cannot reach the target is skipped instead of ruined.
+  private func compress(_ job: ToolJob) throws -> ToolResult {
+    let percent = Double(job.tool.params["percent"] ?? "50") ?? 50
+    var outputs: [ToolOutput] = []
+    var skipped: [ToolSkip] = []
+    for (index, url) in job.inputs.enumerated() {
+      try Task.checkCancellation()
+      let document = try open(url)
+      let original = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+      let target = Int(Double(original) * percent / 100)
+      guard let data = try Self.shrink(document, targetBytes: target) else {
+        skipped.append(ToolSkip(source: index, reason: "Can't reach \(Int(percent))% without ruining it"))
+        continue
+      }
+      let out = job.outputDirectory.appendingPathComponent("\(index)-\(url.lastPathComponent)")
+      try data.write(to: out)
+      outputs.append(ToolOutput(url: out, source: index))
+    }
+    return ToolResult(outputs: outputs, skipped: skipped)
+  }
+
+  private static func shrink(_ document: PDFDocument, targetBytes: Int) throws -> Data? {
+    for dpi in [150.0, 110, 80, 60, 45] {
+      let scale = dpi / 72
+      var pages: [(CGImage, CGRect)] = []
+      for index in 0..<document.pageCount {
+        try Task.checkCancellation()
+        guard let page = document.page(at: index) else { continue }
+        let box = page.bounds(for: .mediaBox)
+        let width = max(Int((box.width * scale).rounded()), 1)
+        let height = max(Int((box.height * scale).rounded()), 1)
+        guard
+          let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return nil }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: -box.minX, y: -box.minY)
+        page.draw(with: .mediaBox, to: context)
+        guard let image = context.makeImage() else { return nil }
+        pages.append((image, CGRect(origin: .zero, size: box.size)))
+      }
+      for quality in [0.7, 0.5, 0.35, 0.2] {
+        try Task.checkCancellation()
+        if let data = pdf(from: pages, quality: quality), data.count <= targetBytes { return data }
+      }
+    }
+    return nil
+  }
+
+  private static func pdf(from pages: [(CGImage, CGRect)], quality: Double) -> Data? {
+    let data = NSMutableData()
+    guard let consumer = CGDataConsumer(data: data), let first = pages.first else { return nil }
+    var firstBox = first.1
+    guard let context = CGContext(consumer: consumer, mediaBox: &firstBox, nil) else { return nil }
+    for (image, box) in pages {
+      // Round-trip through JPEG so the PDF embeds compressed data, not raw pixels.
+      let jpeg = NSMutableData()
+      guard
+        let destination = CGImageDestinationCreateWithData(
+          jpeg, UTType.jpeg.identifier as CFString, 1, nil)
+      else { return nil }
+      CGImageDestinationAddImage(
+        destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+      guard CGImageDestinationFinalize(destination),
+        let source = CGImageSourceCreateWithData(jpeg, nil),
+        let compressed = CGImageSourceCreateImageAtIndex(source, 0, nil)
+      else { return nil }
+      var mediaBox = box
+      let info = [kCGPDFContextMediaBox as String: Data(bytes: &mediaBox, count: MemoryLayout<CGRect>.size)]
+      context.beginPDFPage(info as CFDictionary)
+      context.draw(compressed, in: box)
+      context.endPDFPage()
+    }
+    context.closePDF()
+    return data as Data
   }
 }

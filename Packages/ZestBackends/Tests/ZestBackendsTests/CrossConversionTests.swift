@@ -96,3 +96,36 @@ final class CrossConversionTests: XCTestCase {
     }
   }
 }
+
+final class PDFCompressTests: XCTestCase {
+  func testCompressShowsPercentChoicesAndShrinksAPDF() async throws {
+    let catalog = Catalog()
+    let ids = catalog.router.tools.filter { $0.id.hasPrefix("compress.pdf.") }.map(\.title)
+    XCTAssertEqual(Set(ids), ["25%", "50%", "75%"])
+
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("zest-pc-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    // A big, noisy-ish page: raw pixels make a large PDF that JPEG can shrink.
+    let url = dir.appendingPathComponent("scan.pdf")
+    var box = CGRect(x: 0, y: 0, width: 600, height: 800)
+    let ctx = try XCTUnwrap(CGContext(url as CFURL, mediaBox: &box, nil))
+    let space = CGColorSpaceCreateDeviceRGB()
+    var pixels = [UInt8](repeating: 0, count: 600 * 800 * 4)
+    for i in 0..<pixels.count { pixels[i] = UInt8((i * 7 + i / 600) % 251) }
+    let image = try XCTUnwrap(
+      CGContext(data: &pixels, width: 600, height: 800, bitsPerComponent: 8, bytesPerRow: 2400,
+        space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)?.makeImage())
+    ctx.beginPDFPage(nil); ctx.draw(image, in: box); ctx.endPDFPage(); ctx.closePDF()
+
+    let tool = try XCTUnwrap(catalog.router.tools.first { $0.id == "compress.pdf.50" })
+    let report = try await catalog.pipeline.runTool(tool, inputs: [url])
+    let before = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize!
+    if let out = report.published.first {
+      let after = try out.resourceValues(forKeys: [.fileSizeKey]).fileSize!
+      XCTAssertLessThanOrEqual(after, before / 2)
+    } else {
+      XCTAssertFalse(report.skipped.isEmpty)
+    }
+  }
+}
